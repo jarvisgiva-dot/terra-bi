@@ -1,92 +1,88 @@
-import { createClient } from '@supabase/supabase-js';
-import * as XLSX from 'xlsx';
+const { createClient } = require('@supabase/supabase-js');
+const XLSX = require('xlsx');
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
-
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
   if (req.query.secret !== process.env.SYNC_SECRET)
     return res.status(401).json({ error: 'Unauthorized' });
 
   try {
-    // Baixar xlsx do Drive (link direto de download)
+    const supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_KEY
+    );
+
+    // Baixar xlsx direto do Google Drive (link público de export)
     const fileId = process.env.DRIVE_FILE_ID;
-    const url = `https://drive.google.com/uc?export=download&id=${fileId}`;
+    const url = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`;
     const response = await fetch(url);
+    if (!response.ok) throw new Error(`Drive download failed: ${response.status}`);
     const buffer = await response.arrayBuffer();
 
     const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
 
-    // --- RESUMO ---
-    const wsResumo = wb.Sheets['RESUMO'];
-    const resumoData = XLSX.utils.sheet_to_json(wsResumo);
+    // RESUMO
+    const wsR = wb.Sheets['RESUMO'];
+    const resumoData = XLSX.utils.sheet_to_json(wsR);
     const r = resumoData[0];
     await supabase.from('resumo').upsert([{
-      id: 1,
-      safra: '2024/2025',
-      total_colhido: r['TOTAL COLHIDO'],
-      area_total: r['ÁREA TOTAL'],
-      area_colhida: r['ÁREA COLHIDA'],
-      pct_colhido: r['PERCENTUAL COLHIDO'],
-      area_nao_colhida: r['ÁREA NÃO COLHIDA'],
-      media_geral: r['MÉDIA GERAL'],
-      media_umidade: r['MÉDIA UMIDADE'],
-      media_impureza: r['MÉDIA IMPUREZA'],
-      total_desconto: r['TOTAL DESCONTO'],
-      desconto_sc_ha: r['DESCONTO SC/HÁ'],
+      id: 1, safra: '2024/2025',
+      total_colhido: r['TOTAL COLHIDO'], area_total: r['ÁREA TOTAL'],
+      area_colhida: r['ÁREA COLHIDA'], pct_colhido: r['PERCENTUAL COLHIDO'],
+      area_nao_colhida: r['ÁREA NÃO COLHIDA'], media_geral: r['MÉDIA GERAL'],
+      media_umidade: r['MÉDIA UMIDADE'], media_impureza: r['MÉDIA IMPUREZA'],
+      total_desconto: r['TOTAL DESCONTO'], desconto_sc_ha: r['DESCONTO SC/HÁ'],
       updated_at: new Date().toISOString()
     }]);
 
-    // --- ARMAZEM ---
-    const wsArm = wb.Sheets['ARMAZEM'];
-    const armData = XLSX.utils.sheet_to_json(wsArm);
-    const armRows = armData.filter(r => r['ARMAZEM'] && r['TOTAL']).map(r => ({
-      nome: r['ARMAZEM'], total_sc: r['TOTAL'], safra: '2024/2025'
-    }));
+    // ARMAZEM
+    const wsA = wb.Sheets['ARMAZEM'];
+    const armData = XLSX.utils.sheet_to_json(wsA);
+    const armRows = armData.filter(a => a['ARMAZEM'] && a['TOTAL'])
+      .map(a => ({ safra: '2024/2025', nome: a['ARMAZEM'], total_sc: a['TOTAL'] }));
     await supabase.from('armazem').delete().eq('safra','2024/2025');
-    await supabase.from('armazem').insert(armRows);
+    if (armRows.length) await supabase.from('armazem').insert(armRows);
 
-    // --- COLHEITA DIÁRIA ---
-    const wsData = wb.Sheets['DATA DE COLHEITA'];
-    const dataRows = XLSX.utils.sheet_to_json(wsData, { cellDates: true });
-    const diarioRows = dataRows.filter(r => r['DATA'] && r['TOTAL COLHIDO']).map(r => ({
-      data: r['DATA'] instanceof Date ? r['DATA'].toISOString().split('T')[0] : r['DATA'],
-      total_colhido: r['TOTAL COLHIDO'],
-      area_colhida: r['ÁREA COLHIDA'],
-      acumulado: r['TOTAL'],
-      safra: '2024/2025'
+    // COLHEITA DIÁRIA
+    const wsD = wb.Sheets['DATA DE COLHEITA'];
+    const diaData = XLSX.utils.sheet_to_json(wsD, { cellDates: true });
+    const diaRows = diaData.filter(d => d['DATA'] && d['TOTAL COLHIDO']).map(d => ({
+      safra: '2024/2025',
+      data: d['DATA'] instanceof Date ? d['DATA'].toISOString().split('T')[0] : d['DATA'],
+      total_colhido: d['TOTAL COLHIDO'], area_colhida: d['ÁREA COLHIDA'], acumulado: d['TOTAL']
     }));
     await supabase.from('colheita_diaria').delete().eq('safra','2024/2025');
-    await supabase.from('colheita_diaria').insert(diarioRows);
+    if (diaRows.length) await supabase.from('colheita_diaria').insert(diaRows);
 
-    // --- TALHÕES ---
-    const wsTal = wb.Sheets['PRODUTIVIDADE'];
-    const talRows = XLSX.utils.sheet_to_json(wsTal);
-    const talhoes = talRows.filter(r => r['TALHÃO'] && r['TALHÃO'] !== 'MÉDIA GERAL' && r['ÁREA TOTAL']).map(r => ({
-      talhao: r['TALHÃO'], safra: r['SAFRA'] || '2024/2025',
-      area: r['ÁREA TOTAL'], total_sc: r['TOTAL SC'],
-      produtividade: r['PRODUTIVIDADE'], ha_colhido: r['HECTARES'],
-      pct_colhido: r['PERCENTUAL COLHIDO'], status: r['STATUS']
+    // TALHÕES
+    const wsT = wb.Sheets['PRODUTIVIDADE'];
+    const talData = XLSX.utils.sheet_to_json(wsT);
+    const talRows = talData.filter(t => t['TALHÃO'] && t['TALHÃO'] !== 'MÉDIA GERAL' && t['ÁREA TOTAL']).map(t => ({
+      safra: '2024/2025', talhao: t['TALHÃO'], area: t['ÁREA TOTAL'],
+      total_sc: t['TOTAL SC'], produtividade: t['PRODUTIVIDADE'],
+      ha_colhido: t['HECTARES'], pct_colhido: t['PERCENTUAL COLHIDO'], status: t['STATUS']
     }));
     await supabase.from('talhoes').delete().eq('safra','2024/2025');
-    await supabase.from('talhoes').insert(talhoes);
+    if (talRows.length) await supabase.from('talhoes').insert(talRows);
 
-    // --- HISTÓRICO ---
-    const wsHist = wb.Sheets['PRODUTIVIDADE POR TALHÃO'];
-    const histRows = XLSX.utils.sheet_to_json(wsHist);
-    const historico = histRows.filter(r => r['TALHÃO'] && r['SAFRA'] && r['PRODUTIVIDADE'] > 0).map(r => ({
-      talhao: r['TALHÃO'], safra: r['SAFRA'],
-      total_sc: r['TOTAL COLHIDO'], produtividade: r['PRODUTIVIDADE'], area: r['HECTARES']
+    // HISTÓRICO
+    const wsH = wb.Sheets['PRODUTIVIDADE POR TALHÃO'];
+    const histData = XLSX.utils.sheet_to_json(wsH);
+    const histRows = histData.filter(h => h['TALHÃO'] && h['SAFRA'] && h['PRODUTIVIDADE'] > 0).map(h => ({
+      safra: h['SAFRA'], talhao: h['TALHÃO'],
+      total_sc: h['TOTAL COLHIDO'], produtividade: h['PRODUTIVIDADE'], area: h['HECTARES']
     }));
     await supabase.from('historico').delete();
-    await supabase.from('historico').insert(historico);
+    if (histRows.length) await supabase.from('historico').insert(histRows);
 
-    res.json({ ok: true, synced: { talhoes: talhoes.length, diario: diarioRows.length, historico: historico.length }});
+    res.json({
+      ok: true,
+      updated_at: new Date().toISOString(),
+      counts: { armazem: armRows.length, diario: diaRows.length, talhoes: talRows.length, historico: histRows.length }
+    });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
   }
-}
+};
