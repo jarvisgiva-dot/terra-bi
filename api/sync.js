@@ -19,7 +19,7 @@ module.exports = async function handler(req, res) {
     );
 
     const fileId = process.env.DRIVE_FILE_ID;
-    const url2 = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`;
+    const url2 = `https://drive.usercontent.google.com/download?id=${fileId}&export=download&authuser=0&confirm=t`;
     const response = await fetch(url2);
     if (!response.ok) throw new Error(`Drive download failed: ${response.status}`);
     const buffer = await response.arrayBuffer();
