@@ -3,8 +3,14 @@ const XLSX = require('xlsx');
 
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
-  if (req.query.secret !== process.env.SYNC_SECRET)
-    return res.status(401).json({ error: 'Unauthorized' });
+  
+  // Parse query string manualmente para garantir
+  const url = new URL(req.url, 'https://terra-bi-app.vercel.app');
+  const secret = url.searchParams.get('secret');
+  
+  if (secret !== process.env.SYNC_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized', got: secret ? 'present' : 'missing' });
+  }
 
   try {
     const supabase = createClient(
@@ -12,13 +18,11 @@ module.exports = async function handler(req, res) {
       process.env.SUPABASE_SERVICE_KEY
     );
 
-    // Baixar xlsx direto do Google Drive (link público de export)
     const fileId = process.env.DRIVE_FILE_ID;
-    const url = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`;
-    const response = await fetch(url);
+    const url2 = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`;
+    const response = await fetch(url2);
     if (!response.ok) throw new Error(`Drive download failed: ${response.status}`);
     const buffer = await response.arrayBuffer();
-
     const wb = XLSX.read(buffer, { type: 'array', cellDates: true });
 
     // RESUMO
@@ -75,9 +79,7 @@ module.exports = async function handler(req, res) {
     await supabase.from('historico').delete();
     if (histRows.length) await supabase.from('historico').insert(histRows);
 
-    res.json({
-      ok: true,
-      updated_at: new Date().toISOString(),
+    res.json({ ok: true, updated_at: new Date().toISOString(),
       counts: { armazem: armRows.length, diario: diaRows.length, talhoes: talRows.length, historico: histRows.length }
     });
 
