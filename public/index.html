@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Terra BI — Colheita Soja</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Inter',sans-serif;background:#0f172a;color:#e2e8f0;font-size:14px}
+.header{background:linear-gradient(135deg,#0f172a,#1e3a5f);padding:14px 16px;border-bottom:1px solid #1e3a5f;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:10}
+.header h1{font-size:1em;font-weight:700;color:#10b981}
+.header .sub{color:#64748b;font-size:0.7em;margin-top:2px}
+.badge{background:#10b981;color:#0f172a;padding:3px 10px;border-radius:20px;font-size:0.7em;font-weight:700}
+.live-dot{width:8px;height:8px;background:#10b981;border-radius:50%;display:inline-block;margin-right:5px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+.body{padding:12px}
+.loading{text-align:center;padding:60px;color:#64748b;font-size:1.1em}
+.kpi-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px}
+.kpi{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:12px 10px;text-align:center}
+.kpi .val{font-size:1.4em;font-weight:700;line-height:1.1;margin:5px 0 3px}
+.kpi .lbl{font-size:0.65em;color:#64748b;text-transform:uppercase;letter-spacing:0.8px}
+.kpi .sub{font-size:0.7em;color:#94a3b8;margin-top:1px}
+.kpi.wide{grid-column:span 2}
+.green{color:#10b981}.yellow{color:#f59e0b}.red{color:#ef4444}.blue{color:#60a5fa}.white{color:#f1f5f9}
+.progress-wrap{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:14px;margin-bottom:12px}
+.ptitle{font-size:0.7em;text-transform:uppercase;letter-spacing:1px;color:#64748b;margin-bottom:8px}
+.pbar{background:#0f172a;border-radius:6px;height:26px;overflow:hidden;position:relative}
+.pbar-fill{height:26px;background:linear-gradient(90deg,#10b981,#34d399);border-radius:6px;display:flex;align-items:center;padding-left:10px;font-weight:700;font-size:0.85em;color:#0f172a;transition:width 1s}
+.pbar-rest{position:absolute;right:10px;top:50%;transform:translateY(-50%);color:#64748b;font-size:0.8em}
+.panel{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:14px;margin-bottom:12px}
+.panel h2{font-size:0.7em;text-transform:uppercase;letter-spacing:1px;color:#64748b;margin-bottom:12px}
+.arm-row{display:flex;justify-content:space-around;margin-top:10px}
+.arm-item .av{font-size:1.2em;font-weight:700;text-align:center}
+.arm-item .al{font-size:0.68em;color:#64748b;text-transform:uppercase;text-align:center}
+table{width:100%;border-collapse:collapse;font-size:0.8em}
+thead th{background:#0f172a;color:#64748b;padding:8px 6px;text-align:left;font-size:0.7em;text-transform:uppercase;border-bottom:1px solid #334155}
+tbody td{padding:8px 6px;border-bottom:1px solid #1a2744;vertical-align:middle}
+tbody tr:hover td{background:#243452}
+.footer{text-align:center;padding:14px;color:#334155;font-size:0.7em;border-top:1px solid #1e293b;margin-top:4px}
+@media(min-width:600px){.kpi-grid{grid-template-columns:repeat(4,1fr)}.kpi.wide{grid-column:span 1}}
+@media(min-width:1024px){.kpi-grid{grid-template-columns:repeat(7,1fr)}.body{padding:20px 28px}.grid2{display:grid;grid-template-columns:1fr 2fr;gap:16px;margin-bottom:12px}.grid22{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px}.panel{margin-bottom:0}}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div style="font-size:1em;font-weight:700;color:#10b981">🌾 Terra BI — Colheita Soja</div>
+    <div style="color:#64748b;font-size:0.7em;margin-top:2px">Safra 2024/2025 · <span class="live-dot"></span><span id="lastUpdate">carregando...</span></div>
+  </div>
+  <div class="badge">LIVE</div>
+</div>
+
+<div class="body">
+  <div class="loading" id="loading">⏳ Carregando dados...</div>
+  <div id="content" style="display:none"></div>
+</div>
+
+<div class="footer">Terra BI · SEXTA-FEIRA · Dados ao vivo via Supabase</div>
+
+<script>
+const SUPABASE_URL = '%%SUPABASE_URL%%';
+const SUPABASE_KEY = '%%SUPABASE_ANON_KEY%%';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let charts = {};
+
+async function loadDashboard() {
+  const [resumoRes, armRes, diarRes, talRes, histRes] = await Promise.all([
+    sb.from('resumo').select('*').eq('id',1).single(),
+    sb.from('armazem').select('*').eq('safra','2024/2025'),
+    sb.from('colheita_diaria').select('*').eq('safra','2024/2025').order('data'),
+    sb.from('talhoes').select('*').eq('safra','2024/2025').order('produtividade',{ascending:false}),
+    sb.from('historico').select('*').order('safra')
+  ]);
+
+  const r = resumoRes.data;
+  const arm = armRes.data;
+  const dias = diarRes.data;
+  const tals = talRes.data;
+  const hist = histRes.data;
+
+  // Histórico agrupado por safra
+  const safraMap = {};
+  hist.forEach(h => {
+    if (!safraMap[h.safra]) safraMap[h.safra] = [];
+    if (h.produtividade > 0) safraMap[h.safra].push(h.produtividade);
+  });
+  const histLabels = Object.keys(safraMap).sort().map(s => s.replace('20',''));
+  const histData = Object.keys(safraMap).sort().map(s => {
+    const arr = safraMap[s];
+    return +(arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(2);
+  });
+
+  const pct = (r.pct_colhido*100).toFixed(1);
+  const pctNao = (r.area_nao_colhida / r.area_total * 100).toFixed(1);
+
+  document.getElementById('lastUpdate').textContent = 'atualizado agora';
+  document.getElementById('loading').style.display = 'none';
+
+  document.getElementById('content').style.display = 'block';
+  document.getElementById('content').innerHTML = `
+    <div class="kpi-grid">
+      <div class="kpi wide"><div class="lbl">Total Colhido</div><div class="val green">${(+r.total_colhido).toLocaleString('pt-BR',{maximumFractionDigits:0})} sc</div></div>
+      <div class="kpi"><div class="lbl">Área Total</div><div class="val white">${(+r.area_total).toLocaleString('pt-BR')} ha</div></div>
+      <div class="kpi"><div class="lbl">Colhido</div><div class="val green">${(+r.area_colhida).toLocaleString('pt-BR',{maximumFractionDigits:0})} ha</div><div class="sub">${pct}%</div></div>
+      <div class="kpi"><div class="lbl">A Colher</div><div class="val yellow">${(+r.area_nao_colhida).toLocaleString('pt-BR',{maximumFractionDigits:0})} ha</div><div class="sub">${pctNao}%</div></div>
+      <div class="kpi"><div class="lbl">Média Geral</div><div class="val blue">${(+r.media_geral).toFixed(2)} sc/ha</div></div>
+      <div class="kpi"><div class="lbl">Umidade</div><div class="val white">${(+r.media_umidade).toFixed(1)}%</div><div class="sub">Impureza ${(+r.media_impureza).toFixed(1)}%</div></div>
+      <div class="kpi"><div class="lbl">Total Desconto</div><div class="val red">${(+r.total_desconto).toLocaleString('pt-BR',{maximumFractionDigits:0})} sc</div><div class="sub">${(+r.desconto_sc_ha).toFixed(2)} sc/ha</div></div>
+    </div>
+    <div class="progress-wrap">
+      <div class="ptitle">Progresso — ${(+r.area_nao_colhida).toLocaleString('pt-BR',{maximumFractionDigits:0})} ha restantes</div>
+      <div class="pbar">
+        <div class="pbar-fill" style="width:${pct}%">${pct}%</div>
+        <div class="pbar-rest">${pctNao}% a colher</div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Por Armazém</h2>
+      <div style="position:relative;height:180px"><canvas id="cArmazem"></canvas></div>
+      <div class="arm-row">
+        ${arm.map(a=>`<div class="arm-item"><div class="av ${a.nome==='CRISTALINA'?'green':'blue'}">${(+a.total_sc).toLocaleString('pt-BR',{maximumFractionDigits:0})}</div><div class="al">${a.nome}</div></div>`).join('')}
+        <div class="arm-item"><div class="av white">${arm.reduce((s,a)=>s+(+a.total_sc),0).toLocaleString('pt-BR',{maximumFractionDigits:0})}</div><div class="al">Total sc</div></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Evolução Diária (sacas acumuladas)</h2>
+      <div style="position:relative;height:200px"><canvas id="cEvolucao"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>Produtividade por Talhão (sc/ha)</h2>
+      <div style="position:relative;height:340px"><canvas id="cTalhoes"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>Histórico por Safra (sc/ha médio)</h2>
+      <div style="position:relative;height:200px"><canvas id="cHistorico"></canvas></div>
+    </div>
+    <div class="panel">
+      <h2>Detalhamento por Talhão</h2><br>
+      <table>
+        <thead><tr><th>Talhão</th><th>Sacas</th><th>sc/ha</th><th>Progresso</th><th></th></tr></thead>
+        <tbody>${tals.map(t=>{
+          const cor=t.status==='COMPLETO'?'#10b981':t.pct_colhido>0?'#f59e0b':'#64748b';
+          const ic=t.status==='COMPLETO'?'✅':t.pct_colhido>0?'🔄':'⏳';
+          const pctT=((t.pct_colhido||0)*100).toFixed(0);
+          return `<tr><td><b style="color:#e2e8f0">${t.talhao}</b><br><small style="color:#64748b">${(+t.area).toFixed(0)} ha</small></td><td style="color:#e2e8f0;text-align:right">${(+(t.total_sc||0)).toLocaleString('pt-BR',{maximumFractionDigits:0})}</td><td style="color:${cor};font-weight:700;text-align:right">${(+(t.produtividade||0)).toFixed(1)}</td><td><div style="background:#0f172a;border-radius:3px;height:10px;width:100%"><div style="background:${cor};width:${Math.min(pctT,100)}%;height:10px;border-radius:3px"></div></div><small style="color:#94a3b8">${pctT}%</small></td><td style="color:${cor};text-align:center">${ic}</td></tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>
+  `;
+
+  // Charts
+  Chart.defaults.color='#64748b'; Chart.defaults.borderColor='#1e3a5f';
+  new Chart(document.getElementById('cArmazem'),{type:'doughnut',data:{labels:arm.map(a=>a.nome),datasets:[{data:arm.map(a=>+a.total_sc),backgroundColor:['#10b981','#60a5fa'],borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:'#94a3b8',font:{size:11}}},tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.parsed.toLocaleString('pt-BR')+' sc'}}}}});
+  new Chart(document.getElementById('cEvolucao'),{type:'line',data:{labels:dias.map(d=>d.data.slice(5).replace('-','/')),datasets:[{label:'Acumulado',data:dias.map(d=>d.acumulado),borderColor:'#10b981',backgroundColor:'rgba(16,185,129,0.1)',fill:true,tension:0.4,pointRadius:2},{label:'Diário',data:dias.map(d=>d.total_colhido),borderColor:'#60a5fa',tension:0.4,pointRadius:2,borderDash:[4,3]}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#94a3b8',font:{size:11},boxWidth:12}},tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+ctx.parsed.y.toLocaleString('pt-BR')+' sc'}}},scales:{x:{ticks:{color:'#64748b',font:{size:10},maxRotation:45}},y:{ticks:{color:'#64748b',font:{size:10},callback:v=>(v/1000).toFixed(0)+'k'}}}}});
+  new Chart(document.getElementById('cTalhoes'),{type:'bar',data:{labels:tals.map(t=>t.talhao),datasets:[{label:'sc/ha',data:tals.map(t=>+(t.produtividade||0)),backgroundColor:tals.map(t=>t.status==='COMPLETO'?'#10b981':t.pct_colhido>0?'#f59e0b':'#64748b'),borderRadius:4}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.parsed.x.toFixed(2)+' sc/ha'}}},scales:{x:{ticks:{color:'#64748b',font:{size:10}},grid:{color:'#1e3a5f'}},y:{ticks:{color:'#94a3b8',font:{size:10}}}}}});
+  new Chart(document.getElementById('cHistorico'),{type:'line',data:{labels:histLabels,datasets:[{label:'sc/ha',data:histData,borderColor:'#10b981',backgroundColor:'rgba(16,185,129,0.08)',fill:true,tension:0.3,pointRadius:4,pointBackgroundColor:'#10b981',pointBorderColor:'#0f172a',pointBorderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.parsed.y.toFixed(2)+' sc/ha'}}},scales:{x:{ticks:{color:'#64748b',font:{size:10},maxRotation:45}},y:{ticks:{color:'#64748b',font:{size:10}}}}}});
+}
+
+loadDashboard();
+
+// Realtime — escuta mudanças no Supabase
+sb.channel('resumo-changes')
+  .on('postgres_changes', {event:'UPDATE', schema:'public', table:'resumo'}, () => {
+    document.getElementById('lastUpdate').textContent = 'atualizando...';
+    loadDashboard();
+  }).subscribe();
+</script>
+</body></html>
